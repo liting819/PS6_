@@ -1,0 +1,650 @@
+---
+title: "Problem Set 6 - Waze Shiny Dashboard"
+author: "Peter Ganong, Maggie Shi, and Andre Oviedo"
+date: today
+format: 
+  html:
+    include-in-header: 
+       text: |
+         \usepackage{fvextra}
+         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+include-before-body:
+  text: |
+    \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
+      showspaces = false,
+      showtabs = false,
+      breaksymbolleft={},
+      breaklines
+    }
+---
+1. **ps6:** Due Sat 23rd at 5:00PM Central. Worth 100 points (80 points from questions, 10 points for correct submission and 10 points for code style) + 10 extra credit. 
+
+We use (`*`) to indicate a problem that we think might be time consuming. 
+
+# Steps to submit (10 points on PS6) {-}
+
+1. "This submission is my work alone and complies with the 30538 integrity
+policy." Add your initials to indicate your agreement: \*\*\_\_\*\*
+2. "I have uploaded the names of anyone I worked with on the problem set **[here](https://docs.google.com/forms/d/185usrCREQaUbvAXpWhChkjghdGgmAZXA3lPWpXLLsts/edit)**"  \*\*\_\_\*\* (2 point)
+3. Late coins used this pset: \*\*\_\_\*\* Late coins left after submission: \*\*\_\_\*\*
+
+4. Before starting the problem set, make sure to read and agree to the terms of data usage for the Waze data [here](https://canvas.uchicago.edu/courses/59054/quizzes/130617).
+
+5. Knit your `ps6.qmd` as a pdf document and name it `ps6.pdf`.
+6. Push your `ps6.qmd`, `ps6.pdf`, `requirements.txt`, and all created folders (we will create three Shiny apps so you will have at least three additional folders) to your Github repo (5 points). It is fine to use Github Desktop.
+7. Submit `ps6.pdf` and also link your Github repo via Gradescope (5 points)
+8. Tag your submission in Gradescope. For the Code Style part (10 points) please tag the whole correspondingsection for the code style rubric.
+
+*Notes: see the [Quarto documentation (link)](https://quarto.org/docs/authoring/figures.html) for directions on inserting images into your knitted document.*
+
+*IMPORTANT: For the App portion of the PS, in case you can not arrive to the expected functional dashboard we will need to take a look at your `app.py` file. You can use the following code chunk template to "import" and print the content of that file. Please, don't forget to also tag the corresponding code chunk as part of your submission!*
+
+```{python}
+#| echo: true
+#| eval: false
+
+def print_file_contents(file_path):
+    """Print contents of a file."""
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            print("```python")
+            print(content)
+            print("```")
+    except FileNotFoundError:
+        print("```python")
+        print(f"Error: File '{file_path}' not found")
+        print("```")
+    except Exception as e:
+        print("```python") 
+        print(f"Error reading file: {e}")
+        print("```")
+
+print_file_contents("./top_alerts_map_byhour/app.py") # Change accordingly
+```
+
+```{python} 
+#| echo: false
+
+# Import required packages.
+import pandas as pd
+import altair as alt 
+import pandas as pd
+from datetime import date
+import numpy as np
+import re
+import requests
+import matplotlib.pyplot as plt
+alt.data_transformers.disable_max_rows() 
+import os
+
+import json
+```
+
+# Background {-}
+
+## Data Download and Exploration (20 points){-} 
+1. 
+```{python}
+import zipfile
+
+zip_path = "/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/waze_data.zip" 
+out_path = "/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6"  
+
+# read the file 
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    zip_ref.extractall(out_path)
+
+# load csv file
+df_s = pd.read_csv("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/waze_data_sample.csv")
+df_s.head(5)
+```
+
+city: Nominal
+confidence: Ordinal
+nThumbsUp: Quantitative
+street: Nominal
+uuid: Nominal 
+country: Nominal
+type: Nominal
+subtype: Nominal
+roadType: Nominal
+reliability: Quantitative
+magvar: Nominal
+reportRating: Ordinal
+
+
+2. 
+
+```{python}
+df = pd.read_csv("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/waze_data.csv")
+
+null = df.isnull().sum()
+not_null = df.notnull().sum()
+
+null_df = pd.DataFrame({
+    'null': null,
+    'not_null': not_null
+}).reset_index()
+```
+
+```{python}
+long_df = null_df.melt(id_vars='index', value_vars=['null', 'not_null'], var_name='Missing Status', value_name='Count')
+
+# Create a stacked bar chart using Altair
+bar = alt.Chart(long_df).mark_bar().encode(
+    x='index:N',
+    y='Count:Q',
+    color='Missing Status:N',
+    tooltip=['index:N', 'Missing Status:N', 'Count:Q']
+).properties(
+    title="Stacked bar carts for null v.s. not-null"
+).configure_axis(
+    labelAngle=90
+)
+bar
+```
+
+nThumbs has the most na value and higheset share of na. 
+
+3. 
+
+```{python}
+df['subtype'] = df['subtype'].fillna('NA')
+
+grouped_df = df.groupby(["type","subtype"]).agg(count = ("subtype", "count")).reset_index()
+grouped_df
+```
+
+Accident, Hazard, Jam, Road closed has NA as subtype. 
+Accident has 24359 na in subtype, Hazard has only 3212, Jam has 55041, and Road closed has 13474. As for the number, Accident, Jame, and Road closed will have enough information to generate sub-subtypes. 
+
+**List**
+ACCIDENT
+  - Minor 
+	- Major 
+	- Unclassified
+
+JAM
+	- Moderate 
+	- Heavy
+	- Standstill 
+	- Light
+	- Unclassified
+
+HAZARD
+  - Road
+    - Hazard
+    - Car_Stopped
+    - Consturction
+    - Emergency_Vihicle
+    - Ice
+    - Lane_Closed
+    - Object
+    - Pot_Hole
+    - Road_Kill
+  - Shoulder
+    - Hazard
+    - Animals
+    - Car_Stopped
+    - Missing_sign
+    - Weather
+    - Flood
+    - Fog
+    - Snow
+  - Unclassified
+    
+ROAD_CLOSED
+  - Consturction 
+  - Even
+  - Hazard
+  - Unclassified
+
+Yes, I believe we should keep the NA, since they have large amount of data entries. 
+
+4. 
+
+a. 
+```{python}
+# create hierachy
+df_new = pd.DataFrame(columns=['type', 'subtype', 'update_type', 'update_subtype', 'subsubtype'])
+
+```
+
+b. 
+
+```{python}
+# create hierarchy
+hierarchy = {
+    'ACCIDENT': {
+        'Minor': ['Unclassified'],
+        'Major': ['Unclassified'],
+        "Unclassified" : ["Unclassfied"]
+    },
+    'JAM': {
+        'Moderate': ['Unclassified'],
+        'Heavy': ['Unclassified'],
+        'Standstill': ['Unclassified'],
+        'Light': ['Unclassified'],
+        "Unclassified" : ["Unclassfied"]
+    },
+    'HAZARD': {
+        'Road': ['Hazard', 'Car_Stopped', 'Construction', 'Emergency_Vehicle', 
+                 'Ice', 'Lane_Closed', 'Object', 'Pot_Hole', 'Road_Kill',"Traffict_light_fault"],
+        'Shoulder': ['Hazard', 'Animals', 'Car_Stopped', 'Missing_sign', 
+                      'Weather', 'Flood','Fog', "Hail",'Snow'],
+        'Unclassified': []
+    },
+    'ROAD_CLOSED': {
+        'Construction': ['Unclassified'],
+        'Event': ['Unclassified'],
+        'Hazard': ['Unclassified'],
+        "Unclassified" : ["Unclassfied"]
+    }
+}
+
+crosswalk = []
+for t, subtypes in hierarchy.items():
+    for s, subsubtypes in subtypes.items():
+        if subsubtypes:
+            for subsub in subsubtypes:
+                crosswalk.append({'update_type': t, 'update_subtype': s, 'subsubtype': subsub})
+        else:
+            crosswalk.append({'update_type': t, 'update_subtype': s, 'subsubtype': 'Unclassified'})
+crosswalk = pd.DataFrame(crosswalk)
+
+df_new["type"] = grouped_df["type"]
+df_new["subtype"] = grouped_df["subtype"]
+df_new["update_type"] = crosswalk["update_type"]
+df_new["update_subtype"] = crosswalk["update_subtype"]
+df_new["subsubtype"] = crosswalk["subsubtype"]
+
+```
+
+```{python}
+df_new['subtype'].fillna('Unclassified', inplace=True)
+```
+
+c. 
+
+```{python}
+# merge with the original dataset
+df = df.merge(df_new, how='outer', on=['type', 'subtype'])
+df.head(10)
+```
+
+d. 
+
+
+# App #1: Top Location by Alert Type Dashboard (30 points){-}
+
+1. 
+
+```{python}
+df["longitude"] = 1
+df["latitude"] = 2
+
+for i in range(len(df)):
+  txt = df["geo"][i]
+  clean_txt = re.sub(r'POINT\(|\)', "", txt)
+  split_txt = clean_txt.split()
+  df["longitude"][i]= split_txt[0] 
+  df["latitude"] [i]= split_txt[1] 
+
+df.head()
+
+```
+
+b. 
+```{python}
+
+df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+
+df['longitude'] = df['longitude'].round(2)
+df['latitude'] = df['latitude'].round(2)
+df['longitude_latitude'] = list(zip(df['longitude'], df['latitude']))
+bin_count = df.groupby(["longitude_latitude"]).size().reset_index(name='count')
+bin_sort = bin_count.sort_values(by = "count",ascending = False)
+bin_sort
+```
+
+(-87.65 , 41.88) has the highest occurance with 21325 count
+
+c. Collapse the data down to the level of aggregation needed to plot the top 10
+latitude-longitude bins with the highest number of alerts for a chosen type and
+subtype (Note: no sub-subtype). Save DataFrame as top_alerts_map.csv file in
+the top_alerts_map folder you created. What is the level of aggregation in this
+case? How many rows does this DataFrame have?
+```{python}
+#top 10 latitude-longitude bins 
+top_10_bins = bin_sort[0:10]
+top_10_bins_df = df[df['longitude_latitude'].isin(top_10_bins['longitude_latitude'])]
+
+top_alerts = top_10_bins_df.groupby(["longitude", "latitude","update_type","update_subtype"]).agg( count = ("update_subtype","count")).reset_index()
+
+top_alerts.to_csv("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map/top_alerts_map.csv")
+
+top_alerts.shape
+```
+
+```{python}
+top_10_bins_df.to_csv("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/waze_top10.csv")
+```
+
+The data is aggregated to the city's neighborhood level. There are 136 row. 
+
+2.
+```{python}
+# look for top 10 heavy jam
+top_heavy_jam = top_alerts.loc[(top_alerts["update_type"]=="JAM") & (top_alerts["update_subtype"]=="Heavy")]
+
+# plot the 
+
+scatter = alt.Chart(top_heavy_jam).mark_circle().encode(
+  x = alt.X("longitude",scale = alt.Scale(domain = [-87.77, -87.58])),
+  y = alt.Y("latitude",scale = alt.Scale(domain = [41.67,41.98])),
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam on latitude-longitude',
+    width=500,
+    height=300
+)
+
+scatter
+```
+
+3. 
+    
+a. 
+```{python}
+url = "https://data.cityofchicago.org/api/geospatial/bbvz-uum9?method=export&format=GeoJSON"
+folder_path = "/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map"
+file_path = os.path.join(folder_path, "Boundaries - Neighborhoods.geojson")
+response = requests.get(url)
+```
+    
+
+b. 
+```{python}
+# MODIFY ACCORDINGLY
+#file_path = "./top_alerts_map/chicago-boundaries.geojson"
+#----
+
+with open(file_path) as f:
+    chicago_geojson = json.load(f)
+
+geo_data = alt.Data(values=chicago_geojson["features"])
+
+```
+
+
+4. 
+```{python}
+
+background = alt.Chart(geo_data).mark_geoshape(
+    fill='lightgray',
+    stroke='white'
+).project('albersUsa').properties(
+    width=500,
+    height=300
+)
+
+scatter = alt.Chart(top_heavy_jam).mark_circle().encode(
+  longitude='longitude:Q',
+  latitude='latitude:Q',
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam on latitude-longitude',
+    width=500,
+    height=300
+).project("albersUsa")
+
+background+scatter
+
+```
+
+
+5. 
+
+a. 
+
+![Image 1](./image/image1.png)
+
+b. 
+```{python}
+#| echo: true
+#| eval: false
+
+def print_file_contents(file_path):
+    """Print contents of a file."""
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            print("```python")
+            print(content)
+            print("```")
+    except FileNotFoundError:
+        print("```python")
+        print(f"Error: File '{file_path}' not found")
+        print("```")
+    except Exception as e:
+        print("```python") 
+        print(f"Error reading file: {e}")
+        print("```")
+
+print_file_contents("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map/app.py") # Change accordingly
+```
+
+c. 
+![Image 1](./image/image2.png)
+The most common road closed due to event area is -87.75	41.96	ROAD_CLOSED_EVENT	9907, the area is close to downtown Chicago. 
+
+d. 
+Question: Where is the most common major accident alert? 
+
+![Image 1](./image/image3.png)
+
+Answer: the area (-87.66, 41.90) has the most common major accident alert. The area is more close to O'hare airport.
+
+e. 
+
+We separate the type and subtype, and if users do not select a subtype, we will display the larger group of the alert type. This approach will make it easier to analyze the alerts in a more aggregated manner
+
+# App #2: Top Location by Alert Type and Hour Dashboard (20 points) {-}
+
+1. 
+
+a. 
+
+```{python}
+df["ts"].head()
+```
+
+I don't think it's a good idea. Since the time stamps are counted in seconds, and it probalbly won't be alerts happened in the same time in the seconds. Therefore, it has no meaning to collaps by this column. 
+    
+b. 
+```{python}
+# create a column "hour"
+df["ts"] = pd.to_datetime(df["ts"])
+df["hour"] = df["ts"].dt.floor("h").dt.strftime("%H:00")
+
+# compile the data
+df_hour = df.groupby(["type","subtype", 'geo', 'geoWKT', 'longitude', 'latitude', 'longitude_latitude', 'hour']).agg(count = ("hour","count")).reset_index()
+df_hour.to_csv("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map_byhour/top_alerts_map_byhour.csv")
+
+
+len(df_hour)
+```
+
+There are 724709 rows
+
+c.
+
+```{python}
+# prepare the filtered data
+df_filtered = df_hour.loc[df_hour["subtype"]=="JAM_HEAVY_TRAFFIC"]
+df_by_hour = df_filtered.groupby(["hour","longitude","latitude","longitude_latitude"]).agg(count = ("longitude_latitude","count")).reset_index()
+```
+
+```{python}
+# create plot for 07:00 
+df_7am = df_by_hour.loc[df_by_hour["hour"]=="07:00"].sort_values("count",ascending=False).head(10)
+plot_7am = alt.Chart(df_7am).mark_circle().encode(
+      longitude='longitude:Q',
+  latitude='latitude:Q',
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam on 7am',
+    width=500,
+    height=300
+).project("albersUsa")
+
+background + plot_7am
+
+```
+
+```{python}
+# create plot for 08:00 
+df_8am = df_by_hour.loc[df_by_hour["hour"]=="08:00"].sort_values("count",ascending=False).head(10)
+plot_8am = alt.Chart(df_8am).mark_circle().encode(
+      longitude='longitude:Q',
+  latitude='latitude:Q',
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam on 8am',
+    width=500,
+    height=300
+).project("albersUsa")
+
+background + plot_8am
+
+```
+
+```{python}
+# create plot for 09:00 
+df_9am = df_by_hour.loc[df_by_hour["hour"]=="09:00"].sort_values("count",ascending=False).head(10)
+plot_9am = alt.Chart(df_9am).mark_circle().encode(
+      longitude='longitude:Q',
+  latitude='latitude:Q',
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam on 9am',
+    width=500,
+    height=300
+).project("albersUsa")
+
+background + plot_9am
+```
+
+
+2.
+
+a. 
+![Image 1](./image/image4.png)
+
+b. 
+
+```{python}
+#| echo: true
+#| eval: false
+
+def print_file_contents(file_path):
+    """Print contents of a file."""
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            print("```python")
+            print(content)
+            print("```")
+    except FileNotFoundError:
+        print("```python")
+        print(f"Error: File '{file_path}' not found")
+        print("```")
+    except Exception as e:
+        print("```python") 
+        print(f"Error reading file: {e}")
+        print("```")
+
+print_file_contents("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map_byhour/app.py/app.py") # Change accordingly
+```
+    
+
+c. 
+![Image 1](./image/image5.png)
+![Image 1](./image/image6.png)
+From above two plot we can see that in the morning(6am) there's not much construction happened. On the other hand, while it's in the night (8pm), there are more dots exist in the plot. Therefore, most of the construction happened at night time.  
+
+
+# App #3: Top Location by Alert Type and Hour Dashboard (20 points){-}
+
+1. 
+a. 
+No, it will not be a good idea. If we collapsed data by range, then we will lose the pattern in anyother types of range and the granularity.  
+
+b. 
+
+```{python}
+df_6_9am = df_by_hour.loc[(df_by_hour["hour"] <="09:00")&(df_by_hour["hour"] >="06:00")].sort_values("count",ascending=False).head(10)
+
+plot_6_9am = alt.Chart(df_9am).mark_circle().encode(
+      longitude='longitude:Q',
+  latitude='latitude:Q',
+  size = "count"
+).properties(
+    title='Top 10 Heavy Jam from 6am to 9am',
+    width=500,
+    height=300
+).project("albersUsa")
+
+background + plot_6_9am
+
+```
+
+2. 
+
+a. 
+![Image 1](./image/image7.png)
+
+b.
+
+```{python}
+#| echo: true
+#| eval: false
+
+def print_file_contents(file_path):
+    """Print contents of a file."""
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            print("```python")
+            print(content)
+            print("```")
+    except FileNotFoundError:
+        print("```python")
+        print(f"Error: File '{file_path}' not found")
+        print("```")
+    except Exception as e:
+        print("```python") 
+        print(f"Error reading file: {e}")
+        print("```")
+
+print_file_contents("/Users/tsaili-ting/Uchicago/Year2/Y2Fall/Python2/ps6/top_alerts_map_byhour_sliderrange/app.py/app.py") # Change accordingly
+
+```
+
+![Image 1](./image/image8.png)
+
+3. 
+
+a. 
+    
+
+b. 
+
+
+c. 
+
+
+d.
+
